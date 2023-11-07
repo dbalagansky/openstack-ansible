@@ -77,3 +77,15 @@ doc/source/.doctrees/
 
 # ignore fetched upper-contraints file while translation job
 upper-constraints.txt
+
+# cache stuff
+/.cache/**
+!/.cache/**/
+!/.cache/**/.gitkeep
+
+# wheels/requirements
+/.repo/**
+!/.repo/.gitkeep
+
+# local overrides
+user_zzaio.yml

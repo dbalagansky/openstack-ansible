@@ -10,58 +10,62 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Verify whether required plugins are installed.
-required_plugins = [ "vagrant-disksize" ]
-required_plugins.each do |plugin|
-  if not Vagrant.has_plugin?(plugin)
-    raise "The vagrant plugin #{plugin} is required. Please run `vagrant plugin install #{plugin}`"
-  end
-end
+Vagrant.configure("2") do |config|
+  ENV['VAGRANT_EXPERIMENTAL'] = "disks"
+  ENV['SCENARIO'] ||= "aio"
+  ENV['DEV_SRC_PATH'] ||= "/vagrant"
+  ENV['BOOTSTRAP_OPTS'] ||= ""
 
-Vagrant.configure(2) do |config|
+  require "yaml"
+  require "uri"
 
-  # Configure all VM specs.
-  config.vm.provider "virtualbox" do |v|
-    v.memory = 12288
-    v.cpus = 4
-  end
+  config.vm.box = "ubuntu/jammy64"
 
-  config.vm.synced_folder ".", "/vagrant", type: "rsync"
-
-  # Configure the disk size.
-  disk_size = "60GB"
-
-  config.vm.define "opensuse423" do |leap423|
-    leap423.disksize.size = disk_size
-    leap423.vm.box = "opensuse/openSUSE-42.3-x86_64"
-    leap423.vm.provision "shell",
-      # NOTE(hwoarang) The parted version in Leap 42.3 can't do an online
-      # partition resize so we must create a new one and attach it to the
-      # btrfs filesystem.
-      privileged: true,
-      inline: <<-SHELL
-        cd /vagrant
-        echo -e 'd\n2\nn\np\n\n\n\nn\nw' | fdisk /dev/sda
-        PART_END=$(fdisk -l /dev/sda | grep ^/dev/sda2 | awk '{print $4}')
-        resizepart /dev/sda 2 $PART_END
-        btrfs fi resize max /
-        ./scripts/gate-check-commit.sh
-      SHELL
+  config.vm.provider "virtualbox" do |vb|
+    vb.memory = 12288
+    vb.cpus = 4
   end
 
-  config.vm.define "opensuse150" do |leap150|
-    leap150.disksize.size = disk_size
-    leap150.vm.box = "opensuse/openSUSE-15.0-x86_64"
-    leap150.vm.provision "shell",
-      privileged: true,
-      inline: <<-SHELL
-        cd /vagrant
-        zypper -qn in gdisk
-        echo -e 'x\ne\nw\ny\n' | gdisk /dev/sda
-        parted -s /dev/sda unit GB resizepart 3 100%
-        btrfs fi resize max /
-        ./scripts/gate-check-commit.sh
-      SHELL
+  config.vm.disk :disk, size: "100GB", primary: true
+
+  a_r_r = YAML.load_file("ansible-role-requirements.yml")
+  a_r_r.each do |requirement|
+    src = URI(requirement["src"])
+    src_name = src.path.sub(%r{^/}, "").split("/")[-1]
+
+    if Dir.exist?("../#{src_name}")
+      config.vm.synced_folder "../#{src_name}", "/vagrant/#{src.hostname}#{src.path}"
+    end
   end
 
+  a_c_r = YAML.load_file("ansible-collection-requirements.yml")
+  a_c_r["collections"].each do |requirement|
+    src = URI(requirement["source"])
+    src_name = src.path.sub(%r{^/}, "").split("/")[-1]
+
+    if Dir.exist?("../#{src_name}")
+      config.vm.synced_folder "../#{src_name}", "/vagrant/#{src.hostname}#{src.path}"
+    end
+  end
+
+  config.vm.synced_folder ".", "/opt/openstack-ansible"
+  config.vm.synced_folder ".cache/apt", "/var/cache/apt", group: 'root', owner: 'root'
+  config.vm.synced_folder ".cache/pip", "/root/.cache/pip", group: 'root', owner: 'root'
+  config.vm.synced_folder ".cache/lxc", "/var/cache/lxc"
+  config.vm.synced_folder ".repo", "/var/www/repo"
+
+  config.vm.provision "shell", inline: <<-SHELL
+    export SCENARIO='#{ENV["SCENARIO"]}'
+    export DEV_SRC_PATH='#{ENV["DEV_SRC_PATH"]}'
+    export BOOTSTRAP_OPTS='#{ENV["BOOTSTRAP_OPTS"]}'
+
+    /opt/openstack-ansible/scripts/bootstrap-ansible.sh
+    /opt/openstack-ansible/scripts/bootstrap-aio.sh
+
+    test -f /opt/openstack-ansible/user_zzaio.yml && ln -sv /opt/openstack-ansible/user_zzaio.yml /etc/openstack_deploy/user_zzaio.yml
+
+    cd /opt/openstack-ansible/playbooks
+
+    openstack-ansible setup-everything.yml
+  SHELL
 end

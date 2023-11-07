@@ -269,6 +269,20 @@ lxc_container_bind_mounts:
     container_directory: "/openstack/src"
   - host_directory: "/opt/cache/files"
     container_directory: "/opt/cache/files"
+{% if lookup('env', 'DEV_SRC_PATH') != "" %}
+  - host_directory: "/root/.cache/pip"
+    container_directory: "/root/.cache/pip"
+  - host_directory: "/var/cache/apt"
+    container_directory: "/var/cache/apt"
+{% endif %}
+
+{% if lookup('env', 'DEV_SRC_PATH') != "" %}
+repo_container_bind_mounts:
+  - bind_dir_path: "/var/www/repo"
+    mount_path: "/var/www/repo"
+
+openstack_repo_server_enable_glusterfs: false
+{% endif %}
 
 ## Always setup tempest, the resources for it, then execute tests
 tempest_install: yes
